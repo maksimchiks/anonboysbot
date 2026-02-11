@@ -438,8 +438,8 @@ def _format_expire_date(expire_date: int) -> str:
 def vip_keyboard():
     """Клавиатура управления VIP."""
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("💎 Купить VIP", callback_data="vip_buy")],
-        [InlineKeyboardButton("👑 Купить Premium", callback_data="vip_premium")],
+        [InlineKeyboardButton("💎 Купить VIP (в разработке)", callback_data="vip_buy")],
+        [InlineKeyboardButton("👑 Купить Premium (в разработке)", callback_data="vip_premium")],
         [InlineKeyboardButton("« Назад", callback_data="vip_back")],
     ])
 
@@ -469,7 +469,11 @@ def vip_text(user_id: str) -> str:
     text += "\n🏆 *Преимущества VIP:*\n"
     text += "• Приоритет в очереди\n"
     text += "• Уникальный бейдж\n"
-    text += "• Расширенная статистика"
+    text += "• Расширенная статистика\n\n"
+    
+    text += "💎 *Купить VIP:*\n"
+    text += "⏳ Покупка временно недоступна\n"
+    text += "🚀 Скоро будет добавлена!"
     
     return text
 
@@ -751,6 +755,46 @@ async def cmd_vip(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown",
         reply_markup=vip_keyboard()
     )
+
+
+# ===== VIP CALLBACKS =====
+async def vip_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик callback-запросов для VIP."""
+    q = update.callback_query
+    await q.answer()
+    
+    user_id = str(q.from_user.id)
+    data = q.data
+    
+    if data == "vip_buy":
+        await q.edit_message_text(
+            "💎 *Покупка VIP*\n\n"
+            "⏳ Покупка временно недоступна\n\n"
+            "🚀 Мы работаем над добавлением оплаты!\n"
+            "Следите за обновлениями 👆",
+            parse_mode="Markdown",
+            reply_markup=vip_keyboard()
+        )
+        return
+    
+    if data == "vip_premium":
+        await q.edit_message_text(
+            "👑 *Покупка Premium*\n\n"
+            "⏳ Покупка временно недоступна\n\n"
+            "🚀 Мы работаем над добавлением оплаты!\n"
+            "Следите за обновлениями 👆",
+            parse_mode="Markdown",
+            reply_markup=vip_keyboard()
+        )
+        return
+    
+    if data == "vip_back":
+        await q.edit_message_text(
+            vip_text(user_id),
+            parse_mode="Markdown",
+            reply_markup=vip_keyboard()
+        )
+        return
 
 
 # ===== REG: AGE =====
@@ -1677,6 +1721,7 @@ def main():
     app.add_handler(CallbackQueryHandler(post_actions, pattern="^post_"))
     app.add_handler(CallbackQueryHandler(rating_handler, pattern="^rate_"))
     app.add_handler(CallbackQueryHandler(filters_callbacks, pattern="^filter_"))
+    app.add_handler(CallbackQueryHandler(vip_callbacks, pattern="^vip_"))
 
     # ===== REPLY KEYBOARD BUTTONS =====
     app.add_handler(MessageHandler(filters.Regex("^🔍 Искать$"), start_search))
