@@ -351,13 +351,31 @@ async def _try_match(user_id: str, context: ContextTypes.DEFAULT_TYPE):
 
     persist()
 
-    # notify both
+    # notify both with partner info
+    # Получаем информацию о партнёре для user_id
+    partner_profile = PROFILES.get(partner, {})
+    partner_rating = _rating_stars(partner)
+    partner_gender = partner_profile.get("gender", "—")
+    partner_age = partner_profile.get("age", "—")
+    
+    # Получаем информацию о user_id для partner
+    user_profile = PROFILES.get(user_id, {})
+    user_rating = _rating_stars(user_id)
+    user_gender = user_profile.get("gender", "—")
+    user_age = user_profile.get("age", "—")
+    
+    # Отправляем партнёру информацию о user_id
     await context.bot.send_message(
         int(partner),
-        "✨ Собеседник найден!\n\n"
-        "Можешь писать сообщение 💬",
+        f"✨ Собеседник найден!\n\n"
+        f"👤 Информация о собеседнике:\n"
+        f"🧑 Пол: {user_gender}\n"
+        f"🎂 Возраст: {user_age}\n"
+        f"⭐ Рейтинг: {user_rating}\n\n"
+        f"Можешь писать сообщение 💬",
         reply_markup=MAIN_KB
     )
+    
     return partner
 
 
@@ -503,9 +521,19 @@ async def start_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # try immediate match
     partner = await _try_match(user_id, context)
     if partner:
+        # Получаем информацию о партнёре
+        partner_profile = PROFILES.get(partner, {})
+        partner_rating = _rating_stars(partner)
+        partner_gender = partner_profile.get("gender", "—")
+        partner_age = partner_profile.get("age", "—")
+        
         await update.message.reply_text(
-            "✨ Собеседник найден!\n\n"
-            "Можешь начинать общение 💬",
+            f"✨ Собеседник найден!\n\n"
+            f"👤 Информация о собеседнике:\n"
+            f"🧑 Пол: {partner_gender}\n"
+            f"🎂 Возраст: {partner_age}\n"
+            f"⭐ Рейтинг: {partner_rating}\n\n"
+            f"Можешь начинать общение 💬",
             reply_markup=MAIN_KB
         )
         return
