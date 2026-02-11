@@ -53,6 +53,19 @@ PENDING_RATINGS = BANS.setdefault("__pending_ratings__", {})  # user_id -> partn
 # Фильтры поиска: пол, возраст, мин. рейтинг
 FILTERS = DATA.setdefault("__filters__", {})           # user_id -> {"gender": str, "min_age": int, "max_age": int, "min_rating": float}
 
+# ===== VIP STATUS =====
+# Статусы: user, vip, premium, owner
+VIP_STATUS = {
+    "user": {"emoji": "", "name": "Обычный", "priority": 0},
+    "vip": {"emoji": "⭐", "name": "VIP", "priority": 10},
+    "premium": {"emoji": "💎", "name": "Premium", "priority": 20},
+    "owner": {"emoji": "👑", "name": "Владелец", "priority": 100},
+}
+
+# ===== VIP DATA (храним внутри DATA для persist) =====
+# VIP: user_id -> {"status": str, "expire_date": int (timestamp), "activate_date": int}
+VIP_DATA = DATA.setdefault("__vip__", {})
+
 
 def persist():
     # НЕ трогаю сигнатуру save_data — как у тебя было
@@ -65,7 +78,7 @@ MAIN_KB = ReplyKeyboardMarkup(
         ["🔍 Искать", "🔄 Новый поиск"],
         ["🚫 Завершить"],
         ["👤 Профиль", "🔍 Фильтры"],
-        ["🚨 Пожаловаться"]
+        ["🚨 Пожаловаться", "👑 VIP"]
     ],
     resize_keyboard=True
 )
@@ -335,6 +348,132 @@ def _matches_filters(user_id: str, partner_id: str) -> bool:
     return True
 
 
+# =========================
+# VIP helpers
+# =========================
+import time
+
+def _get_vip_status(user_id: str) -> dict:
+    """Получить VIP-статус пользователя."""
+    user_id = str(user_id)
+    vip = VIP_DATA.get(user_id)
+    if not isinstance(vip, dict):
+        return {"status": "user", "expire_date": None, "activate_date": None}
+    
+    # Проверяем, не истёк ли VIP
+    if vip.get("expire_date") and vip.get("expire_date") < int(time.time()):
+        # VIP истёк, возвращаем user
+        return {"status": "user", "expire_date": None, "activate_date": None}
+    
+    return vip
+
+
+def _is_vip(user_id: str) -> bool:
+    """Проверить, имеет ли пользователь VIP+ статус."""
+    vip = _get_vip_status(user_id)
+    return vip.get("status", "user") in ["vip", "premium", "owner"]
+
+
+def _is_owner(user_id: str) -> bool:
+    """Проверить, является ли пользователь владельцем."""
+    vip = _get_vip_status(user_id)
+    return vip.get("status") == "owner"
+
+
+def _get_vip_emoji(user_id: str) -> str:
+    """Получить emoji-бейдж статуса."""
+    vip = _get_vip_status(user_id)
+    status = vip.get("status", "user")
+    return VIP_STATUS.get(status, VIP_STATUS["user"])["emoji"]
+
+
+def _get_vip_name(user_id: str) -> str:
+    """Получить название статуса."""
+    vip = _get_vip_status(user_id)
+    status = vip.get("status", "user")
+    return VIP_STATUS.get(status, VIP_STATUS["user"])["name"]
+
+
+def _get_priority(user_id: str) -> int:
+    """Получить приоритет в очереди."""
+    vip = _get_vip_status(user_id)
+    status = vip.get("status", "user")
+    return VIP_STATUS.get(status, VIP_STATUS["user"])["priority"]
+
+
+def _set_vip_status(user_id: str, status: str, days: int = 0):
+    """Установить VIP-статус пользователю.
+    
+    Args:
+        user_id: ID пользователя
+        status: user/vip/premium/owner
+        days: количество дней (0 = навсегда/неограниченно)
+    """
+    user_id = str(user_id)
+    now = int(time.time())
+    
+    if days > 0:
+        expire_date = now + (days * 24 * 60 * 60)
+    else:
+        expire_date = None  # Бессрочно
+    
+    VIP_DATA[user_id] = {
+        "status": status,
+        "expire_date": expire_date,
+        "activate_date": now
+    }
+    persist()
+
+
+def _format_expire_date(expire_date: int) -> str:
+    """Форматировать дату окончания VIP."""
+    if not expire_date:
+        return "Навсегда"
+    
+    from datetime import datetime
+    dt = datetime.fromtimestamp(expire_date)
+    return dt.strftime("%d.%m.%Y")
+
+
+def vip_keyboard():
+    """Клавиатура управления VIP."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("💎 Купить VIP", callback_data="vip_buy")],
+        [InlineKeyboardButton("👑 Купить Premium", callback_data="vip_premium")],
+        [InlineKeyboardButton("« Назад", callback_data="vip_back")],
+    ])
+
+
+def vip_text(user_id: str) -> str:
+    """Текст информации о VIP-статусе."""
+    vip = _get_vip_status(user_id)
+    status = vip.get("status", "user")
+    emoji = VIP_STATUS.get(status, VIP_STATUS["user"])["emoji"]
+    name = VIP_STATUS.get(status, VIP_STATUS["user"])["name"]
+    expire_date = vip.get("expire_date")
+    activate_date = vip.get("activate_date")
+    
+    text = f"🎖️ *Твой статус*\n\n"
+    text += f"{emoji} **{name}**\n\n"
+    
+    if activate_date:
+        from datetime import datetime
+        act_date = datetime.fromtimestamp(activate_date).strftime("%d.%m.%Y")
+        text += f"📅 Активировано: {act_date}\n"
+    
+    if expire_date:
+        text += f"⏰ Истекает: {expire_date}\n"
+    else:
+        text += f"⏰ Истекает: Никогда\n"
+    
+    text += "\n🏆 *Преимущества VIP:*\n"
+    text += "• Приоритет в очереди\n"
+    text += "• Уникальный бейдж\n"
+    text += "• Расширенная статистика"
+    
+    return text
+
+
 # ===== FILTERS KEYBOARDS =====
 def filters_main_keyboard():
     """Главная клавиатура фильтров."""
@@ -437,25 +576,45 @@ async def _try_match(user_id: str, context: ContextTypes.DEFAULT_TYPE):
     """Try to match user with someone from queue. Returns partner_id or None."""
     _ensure_sync_all()
 
-    # find first valid partner != user_id who is also searching and not in dialog
-    partner = None
-    for u in SEARCH_QUEUE:
-        if u == user_id:
-            continue
-        # partner must not be in dialog
-        if u in DIALOGS:
-            continue
-        # partner must be searching
-        if USER_STATE.get(u) != STATE_SEARCH:
-            continue
-        # не матчим людей из ЧС
-        if _blocked_between(user_id, u):
-            continue
-        # Проверка фильтров пользователя
-        if not _matches_filters(user_id, u):
-            continue
-        partner = u
-        break
+    user_priority = _get_priority(user_id)
+
+    # Если VIP с приоритетом - ищем сразу первого подходящего
+    if user_priority > 0:
+        # VIP пользователи получают первого доступного
+        for u in SEARCH_QUEUE:
+            if u == user_id:
+                continue
+            if u in DIALOGS:
+                continue
+            if USER_STATE.get(u) != STATE_SEARCH:
+                continue
+            if _blocked_between(user_id, u):
+                continue
+            if not _matches_filters(user_id, u):
+                continue
+            # Нашли!
+            partner = u
+            break
+    else:
+        # Обычные пользователи - проверяем всех по очереди
+        partner = None
+        for u in SEARCH_QUEUE:
+            if u == user_id:
+                continue
+            if u in DIALOGS:
+                continue
+            if USER_STATE.get(u) != STATE_SEARCH:
+                continue
+            if _blocked_between(user_id, u):
+                continue
+            if not _matches_filters(user_id, u):
+                continue
+            # Также проверяем - не VIP ли u (тогда он уже с кем-то)
+            if _get_priority(u) > 0:
+                # Это VIP, он уже должен был получить match раньше
+                continue
+            partner = u
+            break
 
     if not partner:
         return None
@@ -526,7 +685,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ДОБАВЛЕНО: если профиль уже есть — показываем его (и кнопка создать заново)
     p = PROFILES.get(user_id)
     if p:
-        vip_status = "Обычный"  # задел под VIP/Premium
+        vip_emoji = _get_vip_emoji(user_id)
+        vip_name = _get_vip_name(user_id)
         bl_count = len(_bl_list(user_id))
         reports_count = int(REPORTS.get(user_id, 0))
 
@@ -535,7 +695,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🆔 ID: `{user_id}`\n"
             f"🧑 Пол: {p.get('gender', '—')}\n"
             f"🎂 Возраст: {p.get('age', '—')}\n\n"
-            f"⭐ Статус: *{vip_status}*\n"
+            f"{vip_emoji} *Статус: {vip_name}*\n"
             f"🚫 В чёрном списке: *{bl_count}*\n"
             f"🚨 Жалоб на тебя: *{reports_count}*\n\n"
             f"Выбирай действие 👇",
@@ -577,6 +737,20 @@ async def cmd_privacy(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(INFO_TEXT, parse_mode="Markdown")
+
+
+async def cmd_vip(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /vip - показать VIP-статус."""
+    if not update.message or not update.effective_user:
+        return
+    
+    user_id = str(update.effective_user.id)
+    
+    await update.message.reply_text(
+        vip_text(user_id),
+        parse_mode="Markdown",
+        reply_markup=vip_keyboard()
+    )
 
 
 # ===== REG: AGE =====
@@ -1491,6 +1665,7 @@ def main():
     app.add_handler(CommandHandler("stats", stats))
     app.add_handler(CommandHandler("broadcast", broadcast))
     app.add_handler(CommandHandler("filters", cmd_filters))
+    app.add_handler(CommandHandler("vip", cmd_vip))
 
     # ===== INLINE CALLBACKS =====
     app.add_handler(CallbackQueryHandler(menu_callbacks, pattern="^menu_"))
@@ -1510,6 +1685,7 @@ def main():
     app.add_handler(MessageHandler(filters.Regex("^👤 Профиль$"), profile))
     app.add_handler(MessageHandler(filters.Regex("^🚨 Пожаловаться$"), report_start))
     app.add_handler(MessageHandler(filters.Regex("^🔍 Фильтры$"), cmd_filters))
+    app.add_handler(MessageHandler(filters.Regex("^👑 VIP$"), cmd_vip))
 
     # ===== AGE INPUT HANDLER =====
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_age_input))
