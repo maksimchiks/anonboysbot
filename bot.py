@@ -280,12 +280,12 @@ def _get_filters(user_id: str) -> dict:
     user_id = str(user_id)
     filters = FILTERS.get(user_id)
     if not isinstance(filters, dict):
-        # Дефолтные фильтры - без ограничений
+        # Дефолтные фильтры - только мужской пол, возраст 14-18
         filters = {
-            "gender": "all",      # all, male, female
-            "min_age": 16,        # мин. возраст
-            "max_age": 99,        # макс. возраст
-            "min_rating": 0.0     # мин. рейтинг
+            "gender": "male",   # только мужской
+            "min_age": 14,      # мин. возраст
+            "max_age": 18,      # макс. возраст
+            "min_rating": 0.0    # мин. рейтинг
         }
         FILTERS[user_id] = filters
     return filters
@@ -339,7 +339,6 @@ def _matches_filters(user_id: str, partner_id: str) -> bool:
 def filters_main_keyboard():
     """Главная клавиатура фильтров."""
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("👫 Пол", callback_data="filter_gender")],
         [InlineKeyboardButton("📅 Возраст", callback_data="filter_age")],
         [InlineKeyboardButton("⭐ Рейтинг", callback_data="filter_rating")],
         [InlineKeyboardButton("🔄 Сбросить", callback_data="filter_reset")],
@@ -347,26 +346,18 @@ def filters_main_keyboard():
     ])
 
 
-def filter_gender_keyboard():
-    """Выбор пола для фильтра."""
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("♂️ Мужской", callback_data="filter_gender_male")],
-        [InlineKeyboardButton("♀️ Женский", callback_data="filter_gender_female")],
-        [InlineKeyboardButton("🔄 Любой", callback_data="filter_gender_all")],
-        [InlineKeyboardButton("« Назад", callback_data="filter_gender_back")],
-    ])
-
-
 def filter_age_min_keyboard():
     """Выбор мин. возраста."""
-    buttons = [[InlineKeyboardButton(str(i), callback_data=f"filter_age_min_{i}") for i in range(16, 25)]]
+    buttons = [[InlineKeyboardButton(str(i), callback_data=f"filter_age_min_{i}") for i in range(14, 19)]]
+    buttons.append([InlineKeyboardButton("⌨️ Ввести свой", callback_data="filter_age_custom")])
     buttons.append([InlineKeyboardButton("« Назад", callback_data="filter_age_back")])
     return InlineKeyboardMarkup(buttons)
 
 
 def filter_age_max_keyboard():
     """Выбор макс. возраста."""
-    buttons = [[InlineKeyboardButton(str(i), callback_data=f"filter_age_max_{i}") for i in range(25, 36)]]
+    buttons = [[InlineKeyboardButton(str(i), callback_data=f"filter_age_max_{i}") for i in range(14, 19)]]
+    buttons.append([InlineKeyboardButton("⌨️ Ввести свой", callback_data="filter_age_custom")])
     buttons.append([InlineKeyboardButton("« Назад", callback_data="filter_age_back")])
     return InlineKeyboardMarkup(buttons)
 
@@ -387,20 +378,13 @@ def filters_text(user_id: str) -> str:
     """Текст с текущими фильтрами."""
     filters = _get_filters(user_id)
     
-    gender_text = {
-        "all": "🔄 Любой",
-        "male": "♂️ Мужской",
-        "female": "♀️ Женский"
-    }
-    
-    gender = gender_text.get(filters.get("gender", "all"), "🔄 Любой")
-    min_age = filters.get("min_age", 16)
-    max_age = filters.get("max_age", 99)
+    min_age = filters.get("min_age", 14)
+    max_age = filters.get("max_age", 18)
     min_rating = filters.get("min_rating", 0.0)
     
     return (
         f"🔍 *Фильтры поиска*\n\n"
-        f"👫 Пол: {gender}\n"
+        f"👫 Пол: ♂️ Мужской\n"
         f"📅 Возраст: {min_age}-{max_age}\n"
         f"⭐ Мин. рейтинг: {min_rating}\n\n"
         f"Настрой фильтры ниже 👇"
@@ -1329,16 +1313,6 @@ async def filters_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # Выбор пола
-    if data == "filter_gender":
-        await q.edit_message_text(
-            "👫 *Выбери предпочитаемый пол*\n\n"
-            "Будут показаны только собеседники выбранного пола.",
-            parse_mode="Markdown",
-            reply_markup=filter_gender_keyboard()
-        )
-        return
-    
     # Выбор возраста
     if data == "filter_age":
         await q.edit_message_text(
@@ -1362,9 +1336,9 @@ async def filters_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Сброс фильтров
     if data == "filter_reset":
         FILTERS[user_id] = {
-            "gender": "all",
-            "min_age": 16,
-            "max_age": 99,
+            "gender": "male",
+            "min_age": 14,
+            "max_age": 18,
             "min_rating": 0.0
         }
         persist()
@@ -1377,15 +1351,6 @@ async def filters_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Назад в главное меню
     if data == "filter_back":
-        await q.edit_message_text(
-            filters_text(user_id),
-            parse_mode="Markdown",
-            reply_markup=filters_main_keyboard()
-        )
-        return
-    
-    # Назад из меню пола
-    if data == "filter_gender_back":
         await q.edit_message_text(
             filters_text(user_id),
             parse_mode="Markdown",
@@ -1411,26 +1376,13 @@ async def filters_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # Обработка выбора пола
-    if data.startswith("filter_gender_"):
-        gender_map = {
-            "filter_gender_male": "male",
-            "filter_gender_female": "female",
-            "filter_gender_all": "all"
-        }
-        gender = gender_map.get(data, "all")
-        _set_filter(user_id, "gender", gender)
-        
-        gender_text = {
-            "male": "♂️ Мужской",
-            "female": "♀️ Женский",
-            "all": "🔄 Любой"
-        }
-        
+    # Запрос на ввод своего возраста
+    if data == "filter_age_custom":
+        context.user_data["waiting_for_age"] = True
         await q.edit_message_text(
-            f"✅ Выбран пол: {gender_text.get(gender, '🔄 Любой')}\n\n" + filters_text(user_id),
-            parse_mode="Markdown",
-            reply_markup=filters_main_keyboard()
+            "⌨️ *Введи свой возраст*\n\n"
+            "Введи число от 14 до 99",
+            parse_mode="Markdown"
         )
         return
     
@@ -1450,7 +1402,7 @@ async def filters_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Обработка выбора макс. возраста
     if data.startswith("filter_age_max_"):
         max_age = int(data.replace("filter_age_max_", ""))
-        min_age = context.user_data.get("filter_min_age", 16)
+        min_age = context.user_data.get("filter_min_age", 14)
         _set_filter(user_id, "max_age", max_age)
         
         await q.edit_message_text(
@@ -1483,6 +1435,43 @@ async def cmd_filters(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(
         filters_text(user_id),
+        parse_mode="Markdown",
+        reply_markup=filters_main_keyboard()
+    )
+
+
+# ===== HANDLER FOR CUSTOM AGE INPUT =====
+async def handle_age_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка ручного ввода возраста."""
+    if not update.message or not context.user_data.get("waiting_for_age"):
+        return
+    
+    user_id = str(update.effective_user.id)
+    text = update.message.text.strip()
+    
+    # Проверяем, что ввели число
+    try:
+        age = int(text)
+        if age < 14 or age > 99:
+            await update.message.reply_text(
+                "❌ Возраст должен быть от 14 до 99. Попробуй ещё раз:"
+            )
+            return
+    except ValueError:
+        await update.message.reply_text(
+            "❌ Введи число. Например: 16"
+        )
+        return
+    
+    # Сбрасываем флаг ожидания
+    context.user_data.pop("waiting_for_age", None)
+    
+    # Устанавливаем возраст как диапазон (одинаковый мин и макс)
+    _set_filter(user_id, "min_age", age)
+    _set_filter(user_id, "max_age", age)
+    
+    await update.message.reply_text(
+        f"✅ Возраст установлен: {age}\n\n" + filters_text(user_id),
         parse_mode="Markdown",
         reply_markup=filters_main_keyboard()
     )
@@ -1521,6 +1510,9 @@ def main():
     app.add_handler(MessageHandler(filters.Regex("^👤 Профиль$"), profile))
     app.add_handler(MessageHandler(filters.Regex("^🚨 Пожаловаться$"), report_start))
     app.add_handler(MessageHandler(filters.Regex("^🔍 Фильтры$"), cmd_filters))
+
+    # ===== AGE INPUT HANDLER =====
+    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_age_input))
 
     # ===== CHAT RELAY =====
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, relay))
