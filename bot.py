@@ -49,11 +49,14 @@ LAST_PARTNER = BANS.setdefault("__last_partner__", {}) # user_id -> last_partner
 # ===== RATINGS (храним внутри BANS для persist) =====
 RATINGS = BANS.setdefault("__ratings__", {})           # user_id -> {"total": int, "count": int}
 PENDING_RATINGS = BANS.setdefault("__pending_ratings__", {})  # user_id -> partner_id (кого нужно оценить)
+# ===== FILTERS (храним внутри DATA для persist) =====
+# Фильтры поиска: пол, возраст, мин. рейтинг
+FILTERS = DATA.setdefault("__filters__", {})           # user_id -> {"gender": str, "min_age": int, "max_age": int, "min_rating": float}
 
 
 def persist():
     # НЕ трогаю сигнатуру save_data — как у тебя было
-    save_data(PROFILES, DIALOGS, SEARCH_QUEUE, BANS, REPORTS)
+    save_data(PROFILES, DIALOGS, SEARCH_QUEUE, BANS, REPORTS, FILTERS)
 
 
 # ===== KEYBOARD =====
@@ -61,7 +64,8 @@ MAIN_KB = ReplyKeyboardMarkup(
     [
         ["🔍 Искать", "🔄 Новый поиск"],
         ["🚫 Завершить"],
-        ["👤 Профиль", "🚨 Пожаловаться"]
+        ["👤 Профиль", "🔍 Фильтры"],
+        ["🚨 Пожаловаться"]
     ],
     resize_keyboard=True
 )
@@ -268,6 +272,141 @@ def _rating_stars(user_id: str) -> str:
     return "⭐" * full_stars + ("✨" if half_star else "") + "☆" * empty_stars + f" ({avg})"
 
 
+# =========================
+# FILTERS helpers
+# =========================
+def _get_filters(user_id: str) -> dict:
+    """Получить фильтры поиска пользователя."""
+    user_id = str(user_id)
+    filters = FILTERS.get(user_id)
+    if not isinstance(filters, dict):
+        # Дефолтные фильтры - без ограничений
+        filters = {
+            "gender": "all",      # all, male, female
+            "min_age": 16,        # мин. возраст
+            "max_age": 99,        # макс. возраст
+            "min_rating": 0.0     # мин. рейтинг
+        }
+        FILTERS[user_id] = filters
+    return filters
+
+
+def _set_filter(user_id: str, key: str, value):
+    """Установить конкретный фильтр."""
+    filters = _get_filters(user_id)
+    filters[key] = value
+    FILTERS[user_id] = filters
+    persist()
+
+
+def _matches_filters(user_id: str, partner_id: str) -> bool:
+    """Проверить, соответствует ли партнёр фильтрам пользователя."""
+    user_filters = _get_filters(user_id)
+    partner_profile = PROFILES.get(partner_id, {})
+    
+    if not partner_profile:
+        return False
+    
+    # Проверка пола
+    partner_gender = partner_profile.get("gender", "")
+    gender_filter = user_filters.get("gender", "all")
+    if gender_filter != "all":
+        if gender_filter == "male" and partner_gender != "♂️":
+            return False
+        if gender_filter == "female" and partner_gender != "♀️":
+            return False
+    
+    # Проверка возраста
+    try:
+        partner_age = int(partner_profile.get("age", 0))
+        min_age = user_filters.get("min_age", 16)
+        max_age = user_filters.get("max_age", 99)
+        if partner_age < min_age or partner_age > max_age:
+            return False
+    except (ValueError, TypeError):
+        return False
+    
+    # Проверка рейтинга
+    partner_rating = _average_rating(partner_id)
+    min_rating = user_filters.get("min_rating", 0.0)
+    if partner_rating < min_rating:
+        return False
+    
+    return True
+
+
+# ===== FILTERS KEYBOARDS =====
+def filters_main_keyboard():
+    """Главная клавиатура фильтров."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("👫 Пол", callback_data="filter_gender")],
+        [InlineKeyboardButton("📅 Возраст", callback_data="filter_age")],
+        [InlineKeyboardButton("⭐ Рейтинг", callback_data="filter_rating")],
+        [InlineKeyboardButton("🔄 Сбросить", callback_data="filter_reset")],
+        [InlineKeyboardButton("« Назад", callback_data="filter_back")],
+    ])
+
+
+def filter_gender_keyboard():
+    """Выбор пола для фильтра."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("♂️ Мужской", callback_data="filter_gender_male")],
+        [InlineKeyboardButton("♀️ Женский", callback_data="filter_gender_female")],
+        [InlineKeyboardButton("🔄 Любой", callback_data="filter_gender_all")],
+        [InlineKeyboardButton("« Назад", callback_data="filter_gender_back")],
+    ])
+
+
+def filter_age_min_keyboard():
+    """Выбор мин. возраста."""
+    buttons = [[InlineKeyboardButton(str(i), callback_data=f"filter_age_min_{i}") for i in range(16, 25)]]
+    buttons.append([InlineKeyboardButton("« Назад", callback_data="filter_age_back")])
+    return InlineKeyboardMarkup(buttons)
+
+
+def filter_age_max_keyboard():
+    """Выбор макс. возраста."""
+    buttons = [[InlineKeyboardButton(str(i), callback_data=f"filter_age_max_{i}") for i in range(25, 36)]]
+    buttons.append([InlineKeyboardButton("« Назад", callback_data="filter_age_back")])
+    return InlineKeyboardMarkup(buttons)
+
+
+def filter_rating_keyboard():
+    """Выбор мин. рейтинга."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("⭐ 0+", callback_data="filter_rating_0")],
+        [InlineKeyboardButton("⭐ 1+", callback_data="filter_rating_1")],
+        [InlineKeyboardButton("⭐ 2+", callback_data="filter_rating_2")],
+        [InlineKeyboardButton("⭐ 3+", callback_data="filter_rating_3")],
+        [InlineKeyboardButton("⭐ 4+", callback_data="filter_rating_4")],
+        [InlineKeyboardButton("« Назад", callback_data="filter_rating_back")],
+    ])
+
+
+def filters_text(user_id: str) -> str:
+    """Текст с текущими фильтрами."""
+    filters = _get_filters(user_id)
+    
+    gender_text = {
+        "all": "🔄 Любой",
+        "male": "♂️ Мужской",
+        "female": "♀️ Женский"
+    }
+    
+    gender = gender_text.get(filters.get("gender", "all"), "🔄 Любой")
+    min_age = filters.get("min_age", 16)
+    max_age = filters.get("max_age", 99)
+    min_rating = filters.get("min_rating", 0.0)
+    
+    return (
+        f"🔍 *Фильтры поиска*\n\n"
+        f"👫 Пол: {gender}\n"
+        f"📅 Возраст: {min_age}-{max_age}\n"
+        f"⭐ Мин. рейтинг: {min_rating}\n\n"
+        f"Настрой фильтры ниже 👇"
+    )
+
+
 async def _break_dialog(user_id: str, context: ContextTypes.DEFAULT_TYPE, notify_partner: bool = True):
     """Break dialog for user; notify partner if existed."""
     partner = DIALOGS.pop(user_id, None)
@@ -325,8 +464,11 @@ async def _try_match(user_id: str, context: ContextTypes.DEFAULT_TYPE):
         # partner must be searching
         if USER_STATE.get(u) != STATE_SEARCH:
             continue
-        # ДОБАВЛЕНО: не матчим людей из ЧС
+        # не матчим людей из ЧС
         if _blocked_between(user_id, u):
+            continue
+        # Проверка фильтров пользователя
+        if not _matches_filters(user_id, u):
             continue
         partner = u
         break
@@ -345,7 +487,7 @@ async def _try_match(user_id: str, context: ContextTypes.DEFAULT_TYPE):
     _set_state(user_id, STATE_DIALOG)
     _set_state(partner, STATE_DIALOG)
 
-    # ДОБАВЛЕНО: запоминаем последнего собеседника
+    # запоминаем последнего собеседника
     LAST_PARTNER[user_id] = partner
     LAST_PARTNER[partner] = user_id
 
@@ -1169,6 +1311,183 @@ async def menu_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
+# ===== FILTERS CALLBACKS =====
+async def filters_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик callback-запросов для фильтров."""
+    q = update.callback_query
+    await q.answer()
+    
+    user_id = str(q.from_user.id)
+    data = q.data
+    
+    # Главное меню фильтров
+    if data == "filter_main":
+        await q.edit_message_text(
+            filters_text(user_id),
+            parse_mode="Markdown",
+            reply_markup=filters_main_keyboard()
+        )
+        return
+    
+    # Выбор пола
+    if data == "filter_gender":
+        await q.edit_message_text(
+            "👫 *Выбери предпочитаемый пол*\n\n"
+            "Будут показаны только собеседники выбранного пола.",
+            parse_mode="Markdown",
+            reply_markup=filter_gender_keyboard()
+        )
+        return
+    
+    # Выбор возраста
+    if data == "filter_age":
+        await q.edit_message_text(
+            "📅 *Выбери возрастной диапазон*\n\n"
+            "Сначала минимальный возраст:",
+            parse_mode="Markdown",
+            reply_markup=filter_age_min_keyboard()
+        )
+        return
+    
+    # Выбор рейтинга
+    if data == "filter_rating":
+        await q.edit_message_text(
+            "⭐ *Выбери минимальный рейтинг*\n\n"
+            "Будут показаны только собеседники с рейтингом не ниже выбранного.",
+            parse_mode="Markdown",
+            reply_markup=filter_rating_keyboard()
+        )
+        return
+    
+    # Сброс фильтров
+    if data == "filter_reset":
+        FILTERS[user_id] = {
+            "gender": "all",
+            "min_age": 16,
+            "max_age": 99,
+            "min_rating": 0.0
+        }
+        persist()
+        await q.edit_message_text(
+            "✅ Фильтры сброшены!\n\n" + filters_text(user_id),
+            parse_mode="Markdown",
+            reply_markup=filters_main_keyboard()
+        )
+        return
+    
+    # Назад в главное меню
+    if data == "filter_back":
+        await q.edit_message_text(
+            filters_text(user_id),
+            parse_mode="Markdown",
+            reply_markup=filters_main_keyboard()
+        )
+        return
+    
+    # Назад из меню пола
+    if data == "filter_gender_back":
+        await q.edit_message_text(
+            filters_text(user_id),
+            parse_mode="Markdown",
+            reply_markup=filters_main_keyboard()
+        )
+        return
+    
+    # Назад из меню возраста
+    if data == "filter_age_back":
+        await q.edit_message_text(
+            filters_text(user_id),
+            parse_mode="Markdown",
+            reply_markup=filters_main_keyboard()
+        )
+        return
+    
+    # Назад из меню рейтинга
+    if data == "filter_rating_back":
+        await q.edit_message_text(
+            filters_text(user_id),
+            parse_mode="Markdown",
+            reply_markup=filters_main_keyboard()
+        )
+        return
+    
+    # Обработка выбора пола
+    if data.startswith("filter_gender_"):
+        gender_map = {
+            "filter_gender_male": "male",
+            "filter_gender_female": "female",
+            "filter_gender_all": "all"
+        }
+        gender = gender_map.get(data, "all")
+        _set_filter(user_id, "gender", gender)
+        
+        gender_text = {
+            "male": "♂️ Мужской",
+            "female": "♀️ Женский",
+            "all": "🔄 Любой"
+        }
+        
+        await q.edit_message_text(
+            f"✅ Выбран пол: {gender_text.get(gender, '🔄 Любой')}\n\n" + filters_text(user_id),
+            parse_mode="Markdown",
+            reply_markup=filters_main_keyboard()
+        )
+        return
+    
+    # Обработка выбора мин. возраста
+    if data.startswith("filter_age_min_"):
+        min_age = int(data.replace("filter_age_min_", ""))
+        context.user_data["filter_min_age"] = min_age
+        _set_filter(user_id, "min_age", min_age)
+        
+        await q.edit_message_text(
+            f"📅 Мин. возраст: {min_age}\n\nТеперь максимальный возраст:",
+            parse_mode="Markdown",
+            reply_markup=filter_age_max_keyboard()
+        )
+        return
+    
+    # Обработка выбора макс. возраста
+    if data.startswith("filter_age_max_"):
+        max_age = int(data.replace("filter_age_max_", ""))
+        min_age = context.user_data.get("filter_min_age", 16)
+        _set_filter(user_id, "max_age", max_age)
+        
+        await q.edit_message_text(
+            f"✅ Возрастной диапазон: {min_age}-{max_age}\n\n" + filters_text(user_id),
+            parse_mode="Markdown",
+            reply_markup=filters_main_keyboard()
+        )
+        return
+    
+    # Обработка выбора мин. рейтинга
+    if data.startswith("filter_rating_"):
+        min_rating = float(data.replace("filter_rating_", ""))
+        _set_filter(user_id, "min_rating", min_rating)
+        
+        await q.edit_message_text(
+            f"✅ Мин. рейтинг: {min_rating}\n\n" + filters_text(user_id),
+            parse_mode="Markdown",
+            reply_markup=filters_main_keyboard()
+        )
+        return
+
+
+# ===== FILTERS COMMAND =====
+async def cmd_filters(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /filters - показать настройки фильтров."""
+    if not update.message or not update.effective_user:
+        return
+    
+    user_id = str(update.effective_user.id)
+    
+    await update.message.reply_text(
+        filters_text(user_id),
+        parse_mode="Markdown",
+        reply_markup=filters_main_keyboard()
+    )
+
+
 # ===== MAIN =====
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
@@ -1182,6 +1501,7 @@ def main():
     app.add_handler(CommandHandler("blacklist", cmd_blacklist))
     app.add_handler(CommandHandler("stats", stats))
     app.add_handler(CommandHandler("broadcast", broadcast))
+    app.add_handler(CommandHandler("filters", cmd_filters))
 
     # ===== INLINE CALLBACKS =====
     app.add_handler(CallbackQueryHandler(menu_callbacks, pattern="^menu_"))
@@ -1192,6 +1512,7 @@ def main():
     app.add_handler(CallbackQueryHandler(admin_actions, pattern="^admin_"))
     app.add_handler(CallbackQueryHandler(post_actions, pattern="^post_"))
     app.add_handler(CallbackQueryHandler(rating_handler, pattern="^rate_"))
+    app.add_handler(CallbackQueryHandler(filters_callbacks, pattern="^filter_"))
 
     # ===== REPLY KEYBOARD BUTTONS =====
     app.add_handler(MessageHandler(filters.Regex("^🔍 Искать$"), start_search))
@@ -1199,6 +1520,7 @@ def main():
     app.add_handler(MessageHandler(filters.Regex("^🚫 Завершить$"), end_dialog))
     app.add_handler(MessageHandler(filters.Regex("^👤 Профиль$"), profile))
     app.add_handler(MessageHandler(filters.Regex("^🚨 Пожаловаться$"), report_start))
+    app.add_handler(MessageHandler(filters.Regex("^🔍 Фильтры$"), cmd_filters))
 
     # ===== CHAT RELAY =====
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, relay))

@@ -9,7 +9,8 @@ def _default():
         "dialogs": {},
         "queue": [],
         "bans": {},
-        "reports": {}
+        "reports": {},
+        "__filters__": {}
     }
 
 def load_data():
@@ -40,14 +41,15 @@ def load_data():
             base[k] = _default()[k]
     return base
 
-def save_data(profiles, dialogs, queue, bans, reports):
+def save_data(profiles, dialogs, queue, bans, reports, filters_data=None):
     os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
     data = {
         "profiles": profiles,
         "dialogs": dialogs,
         "queue": queue,
         "bans": bans,
-        "reports": reports
+        "reports": reports,
+        "__filters__": filters_data or {}
     }
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
